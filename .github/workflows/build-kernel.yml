@@ -33,7 +33,7 @@ jobs:
           mv susfs4ksu/kernel_patches/KernelSU susfs4ksu/kernel_patches/KernelSU-Next
           cp -r susfs4ksu/kernel_patches/* kernel_platform/msm-kernel
           cd kernel_platform/msm-kernel/KernelSU-Next
-          patch -p1 < 10_enable_susfs_for_ksu.patch | true
+          patch -p1 < 10_enable_susfs_for_ksu.patch || true
           cd ..
           patch -p1 < 50_add_susfs_in_gki-android14-6.1.patch
 
@@ -42,6 +42,7 @@ jobs:
         run: |
           git clone https://github.com/TheWildJames/kernel_patches.git --depth 1
           cp kernel_patches/* kernel_platform/msm-kernel
+          cd kernel_platform/msm-kernel
           patch -p1 -F 3 < selinux.c_fix.patch
           patch -p1 -F 3 < apk_sign.c_fix.patch
           patch -p1 -F 3 < core_hook.c_fix.patch
