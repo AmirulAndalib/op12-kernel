@@ -1,6 +1,12 @@
-name: build-kernel
+name: Build and Release Kernel
+
 on:
   workflow_dispatch:
+
+env:
+  DEBIAN_FRONTEND: noninteractive
+  CCACHE_DIR: /home/runner/.ccache
+
 jobs:
   build-ksu:
     runs-on: ubuntu-latest
@@ -10,17 +16,50 @@ jobs:
         with:
           swap-size-gb: 10
 
-      - name: Setup build environment
+      - name: Setup Build Environment
         run: |
           sudo apt-get update
-          sudo apt-get install -y curl git ccache pngcrush schedtool maven lib32ncurses5-dev xsltproc libxml2-utils squashfs-tools lzop flex build-essential bc libssl-dev libswitch-perl libxml-simple-perl zip unzip g++-multilib bison gperf zlib1g-dev automake device-tree-compiler
+          sudo apt-get install -y --no-install-recommends \
+            curl \
+            git \
+            ccache \
+            pngcrush \
+            schedtool \
+            maven \
+            lib32ncurses5-dev \
+            xsltproc \
+            libxml2-utils \
+            squashfs-tools \
+            lzop \
+            flex \
+            build-essential \
+            bc \
+            libssl-dev \
+            libswitch-perl \
+            libxml-simple-perl \
+            zip \
+            unzip \
+            g++-multilib \
+            bison \
+            gperf \
+            zlib1g-dev \
+            automake \
+            device-tree-compiler
           sudo curl --create-dirs -L -o /usr/local/bin/repo -O -L https://storage.googleapis.com/git-repo-downloads/repo
           sudo chmod a+rx /usr/local/bin/repo
 
-      - name: Clone repo and sync
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          max-size: 2G
+          key: ${{ runner.os }}-ccache-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-ccache-
+
+      - name: Clone Repo and Sync
         run: |
           repo init -u https://github.com/OnePlusOSS/kernel_manifest.git -b oneplus/sm8650 -m oneplus12_v.xml --depth=1
-          repo sync
+          repo sync -j$(nproc)
 
       - name: Include KSU
         run: |
@@ -37,8 +76,7 @@ jobs:
           cd ..
           patch -p1 < 50_add_susfs_in_gki-android14-6.1.patch
 
-      # https://github.com/TheWildJames/kernel_build_scripts/blob/main/OnePlus/op12_a15_build_kernel_susfs_release.sh
-      - name: Fix failed susfs4ksu patches
+      - name: Fix Failed susfs4ksu Patches
         run: |
           git clone https://github.com/TheWildJames/kernel_patches.git --depth 1
           cp kernel_patches/* kernel_platform/msm-kernel
@@ -51,21 +89,20 @@ jobs:
         with:
           path: op12-kernel
           fetch-depth: 0
-      - name: Include custom defconfig
+
+      - name: Include Custom Defconfig
         run: |
-          cat op12-kernel/custom_defconfig >> \
-              kernel_platform/msm-kernel/arch/arm64/configs/gki_defconfig
+          cat op12-kernel/custom_defconfig >> kernel_platform/msm-kernel/arch/arm64/configs/gki_defconfig
           sed -i 's/check_defconfig/true/g' kernel_platform/msm-kernel/build.config.gki
 
-      - name: Build kernel
+      - name: Build Kernel
         run: |
           cd kernel_platform
           mkdir out
           touch .scmversion
-          python3 build_with_bazel.py -t pineapple gki -o "$(pwd)/out"
+          python3 build_with_bazel.py -t pineapple gki -o "$(pwd)/out" -j$(nproc)
 
-      # https://github.com/tiann/KernelSU/blob/69f31abd62e4f275bb33c9b478961d09231f154d/.github/workflows/gki-kernel.yml#L220
-      - name: Prepare artifacts
+      - name: Prepare Artifacts
         run: |
           mkdir output
           cp kernel_platform/out/dist/Image output
@@ -74,7 +111,7 @@ jobs:
           rm -rf AnyKernel3/.git
           cp kernel_platform/out/dist/Image AnyKernel3
 
-      - name: Upload Image and Image.gz
+      - name: Upload Image and Image.lz4
         uses: actions/upload-artifact@v4
         with:
           name: Image-op12
@@ -85,3 +122,31 @@ jobs:
         with:
           name: AnyKernel3-op12
           path: AnyKernel3/*
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2.2.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          files: |
+            output/Image
+            output/Image.lz4
+            AnyKernel3/*
+          tag_name: "v$(date +'%Y.%m.%d-%H%M%S')"
+          name: "OP12 A15 android14-6.1 With KernelSU & SUSFS"
+          body: |
+            OnePlus 12 Kernel Release
+            - Based on Android 14 (6.1)
+            - Integrated KernelSU
+            - SUSFS Support
+            - Built with GitHub Actions
+            - Build Date: $(date +'%Y-%m-%d %H:%M:%S')
+          draft: false
+          prerelease: false
+
+      - name: Upload Build Logs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-logs
+          path: kernel_platform/out/logs
