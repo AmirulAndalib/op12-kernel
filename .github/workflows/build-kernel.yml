@@ -111,6 +111,11 @@ jobs:
           mkdir out
           touch .scmversion
           python3 build_with_bazel.py -t pineapple gki -o "$(pwd)/out"
+          
+      - name: Generate Tag Name
+        id: generate_tag
+        run: echo "TAG_NAME=v$(date +'%Y.%m.%d-%H%M%S')" >> $GITHUB_ENV
+
       - name: Prepare Artifacts
         run: |
           mkdir output
@@ -141,7 +146,7 @@ jobs:
             output/Image
             output/Image.lz4
             AnyKernel3/*
-          tag_name: "v$(date +'%Y.%m.%d-%H%M%S')"
+          tag_name: ${{ env.TAG_NAME }}
           name: "OP12 A15 android14-6.1 With KernelSU & SUSFS"
           body: |
             OnePlus 12 Kernel Release
