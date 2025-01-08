@@ -1,15 +1,27 @@
 name: Build and Release Kernel
 
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
 
 env:
   DEBIAN_FRONTEND: noninteractive
+  ROOT_DIR_PREFIX: "OP12-A15"
+  BRANCH: "android14-6.1"
   CCACHE_DIR: /home/runner/.ccache
+  CCACHE_COMPRESS: "true"
+  CCACHE_COMPRESSLEVEL: "6"
+  CCACHE_MAXSIZE: "5G"
+  CCACHE_HARDLINK: "true"
+  MAKEFLAGS: "-j$(nproc)"
+  TERM: xterm-256color
 
 jobs:
-  build-ksu:
+  build-release:
     runs-on: ubuntu-latest
+    timeout-minutes: 360
     steps:
       - name: Set Swap Space
         uses: pierotofy/set-swap-space@master
@@ -18,40 +30,38 @@ jobs:
 
       - name: Setup Build Environment
         run: |
-          sudo apt-get update
+          sudo apt-get update -y
           sudo apt-get install -y --no-install-recommends \
+            python3-pip \
             curl \
             git \
-            ccache \
-            pngcrush \
-            schedtool \
-            maven \
-            lib32ncurses5-dev \
-            xsltproc \
-            libxml2-utils \
-            squashfs-tools \
-            lzop \
-            flex \
-            build-essential \
-            bc \
-            libssl-dev \
-            libswitch-perl \
-            libxml-simple-perl \
             zip \
             unzip \
-            g++-multilib \
+            gcc \
+            g++ \
+            make \
+            ninja-build \
+            file \
+            bc \
             bison \
-            gperf \
-            zlib1g-dev \
-            automake \
-            device-tree-compiler
+            flex \
+            libssl-dev \
+            libelf-dev \
+            wget \
+            build-essential \
+            python3-dev \
+            python3-setuptools \
+            rsync \
+            ccache \
+            pigz \
+            parallel
           sudo curl --create-dirs -L -o /usr/local/bin/repo -O -L https://storage.googleapis.com/git-repo-downloads/repo
           sudo chmod a+rx /usr/local/bin/repo
 
       - name: Setup ccache
         uses: hendrikmuhs/ccache-action@v1.2
         with:
-          max-size: 2G
+          max-size: 5G
           key: ${{ runner.os }}-ccache-${{ github.sha }}
           restore-keys: |
             ${{ runner.os }}-ccache-
