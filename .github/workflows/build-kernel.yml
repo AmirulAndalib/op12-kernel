@@ -110,8 +110,7 @@ jobs:
           cd kernel_platform
           mkdir out
           touch .scmversion
-          python3 build_with_bazel.py -t pineapple gki -o "$(pwd)/out" -j$(nproc)
-
+          python3 build_with_bazel.py -t pineapple gki -o "$(pwd)/out"
       - name: Prepare Artifacts
         run: |
           mkdir output
