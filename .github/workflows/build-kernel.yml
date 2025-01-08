@@ -112,43 +112,86 @@ jobs:
           touch .scmversion
           python3 build_with_bazel.py -t pineapple gki -o "$(pwd)/out"
           
-      - name: Generate Tag Name
+      - name: Generate Tag Name and Build Date
         id: generate_tag
-        run: echo "TAG_NAME=v$(date +'%Y.%m.%d-%H%M%S')" >> $GITHUB_ENV
+        run: |
+          TAG_NAME="v$(date +'%Y.%m.%d-%H%M%S')"
+          BUILD_DATE="$(date +'%Y-%m-%d %H:%M:%S')"
+          echo "TAG_NAME=${TAG_NAME}" >> $GITHUB_ENV
+          echo "BUILD_DATE=${BUILD_DATE}" >> $GITHUB_ENV
+          echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
+          echo "build_date=${BUILD_DATE}" >> $GITHUB_OUTPUT
 
       - name: Prepare Artifacts
         run: |
-          mkdir output
-          cp kernel_platform/out/dist/Image output
-          cp kernel_platform/out/dist/Image.lz4 output
+          mkdir -p output
+          # Verify and copy kernel images
+          if [ -f kernel_platform/out/dist/Image ]; then
+            cp kernel_platform/out/dist/Image output/
+          else
+            echo "Error: Image file not found"
+            exit 1
+          fi
+          
+          if [ -f kernel_platform/out/dist/Image.lz4 ]; then
+            cp kernel_platform/out/dist/Image.lz4 output/
+          else
+            echo "Error: Image.lz4 file not found"
+            exit 1
+          fi
+          
+          # Clone and prepare AnyKernel3
           git clone https://github.com/Kernel-SU/AnyKernel3 --depth 1
           rm -rf AnyKernel3/.git
-          cp kernel_platform/out/dist/Image AnyKernel3
-          zip -r "AnyKernel3_ksunext_susfs_${TAG_NAME}_op12.zip" AnyKernel3
-          mv "AnyKernel3_ksunext_susfs_${TAG_NAME}_op12.zip" output/
+          
+          # Verify kernel image exists before copying
+          if [ -f kernel_platform/out/dist/Image ]; then
+            cp kernel_platform/out/dist/Image AnyKernel3/
+          else
+            echo "Error: Image file not found for AnyKernel3"
+            exit 1
+          fi
+          
+          # Create zip with verified contents
+          ZIP_NAME="AnyKernel3_ksunext_susfs_${TAG_NAME}_op12.zip"
+          zip -r "${ZIP_NAME}" AnyKernel3
+          mv "${ZIP_NAME}" output/
+          
+          # Verify all files exist
+          ls -la output/
 
       - name: Upload Image and Image.lz4
         uses: actions/upload-artifact@v4
         with:
           name: Image-op12
           path: output/*
+          if-no-files-found: error
 
       - name: Upload AnyKernel3
         uses: actions/upload-artifact@v4
         with:
           name: AnyKernel3-op12
           path: AnyKernel3/*
+          if-no-files-found: error
 
-      - name: Create Release
-        uses: softprops/action-gh-release@v2.2.0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify Release Files
+        run: |
+          for file in output/*; do
+            echo "Verifying file: $file"
+            if [ ! -f "$file" ]; then
+              echo "Error: File $file not found"
+              exit 1
+            fi
+            ls -l "$file"
+          done
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: ncipollo/release-action@v1
         with:
-          files: |
-            output/Image
-            output/Image.lz4
-            output/AnyKernel3_ksunext_susfs_${{ env.TAG_NAME }}_op12.zip
-          tag_name: ${{ env.TAG_NAME }}
+          artifacts: "output/*"
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ env.TAG_NAME }}
           name: "OP12 A15 android14-6.1 With KernelSU & SUSFS"
           body: |
             OnePlus 12 Kernel Release
@@ -156,9 +199,11 @@ jobs:
             - Integrated KernelSU
             - SUSFS Support
             - Built with GitHub Actions
-            - Build Date: $(date +'%Y-%m-%d %H:%M:%S')
+            - Build Date: ${{ env.BUILD_DATE }}
           draft: false
           prerelease: false
+          allowUpdates: true
+          replacesArtifacts: true
 
       - name: Upload Build Logs
         uses: actions/upload-artifact@v4
@@ -166,3 +211,4 @@ jobs:
         with:
           name: build-logs
           path: kernel_platform/out/logs
+          if-no-files-found: error
