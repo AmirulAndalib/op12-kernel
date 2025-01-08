@@ -124,6 +124,8 @@ jobs:
           git clone https://github.com/Kernel-SU/AnyKernel3 --depth 1
           rm -rf AnyKernel3/.git
           cp kernel_platform/out/dist/Image AnyKernel3
+          zip -r "AnyKernel3_ksunext_susfs_${TAG_NAME}_op12.zip" AnyKernel3
+          mv "AnyKernel3_ksunext_susfs_${TAG_NAME}_op12.zip" output/
 
       - name: Upload Image and Image.lz4
         uses: actions/upload-artifact@v4
@@ -145,7 +147,7 @@ jobs:
           files: |
             output/Image
             output/Image.lz4
-            AnyKernel3/*
+            output/AnyKernel3_ksunext_susfs_${{ env.TAG_NAME }}_op12.zip
           tag_name: ${{ env.TAG_NAME }}
           name: "OP12 A15 android14-6.1 With KernelSU & SUSFS"
           body: |
