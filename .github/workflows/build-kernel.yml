@@ -144,18 +144,19 @@ jobs:
           git clone https://github.com/Kernel-SU/AnyKernel3 --depth 1
           rm -rf AnyKernel3/.git
           
-          # Verify kernel image exists before copying
-          if [ -f kernel_platform/out/dist/Image ]; then
-            cp kernel_platform/out/dist/Image AnyKernel3/
+          # Change to AnyKernel3 directory and prepare zip
+          cd AnyKernel3
+          if [ -f ../kernel_platform/out/dist/Image ]; then
+            cp ../kernel_platform/out/dist/Image ./
           else
             echo "Error: Image file not found for AnyKernel3"
             exit 1
           fi
           
-          # Create zip with verified contents
+          # Create zip from within AnyKernel3 directory
           ZIP_NAME="AnyKernel3_ksunext_susfs_${TAG_NAME}_op12.zip"
-          zip -r "${ZIP_NAME}" AnyKernel3
-          mv "${ZIP_NAME}" output/
+          zip -r "../output/${ZIP_NAME}" *
+          cd ..
           
           # Verify all files exist
           ls -la output/
@@ -198,17 +199,10 @@ jobs:
             - Based on Android 14 (6.1)
             - Integrated KernelSU
             - SUSFS Support
+ 
             - Built with GitHub Actions
             - Build Date: ${{ env.BUILD_DATE }}
           draft: false
           prerelease: false
           allowUpdates: true
           replacesArtifacts: true
-
-      - name: Upload Build Logs
-        uses: actions/upload-artifact@v4
-        if: always()
-        with:
-          name: build-logs
-          path: kernel_platform/out/logs
-          if-no-files-found: error
