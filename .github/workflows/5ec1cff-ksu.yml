@@ -1,0 +1,206 @@
+name: Kernel Build and Release
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+env:
+  DEBIAN_FRONTEND: noninteractive
+  ROOT_DIR_PREFIX: "OP12-A15"
+  BRANCH: "android14-6.1"
+  CCACHE_DIR: /home/runner/.ccache
+  CCACHE_COMPRESS: "true"
+  CCACHE_COMPRESSLEVEL: "6"
+  CCACHE_MAXSIZE: "5G"
+  CCACHE_HARDLINK: "true"
+  MAKEFLAGS: "-j$(nproc)"
+  TERM: xterm-256color
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    
+    steps:
+      - name: Maximize build space
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: false
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          max-size: 5G
+          key: ${{ runner.os }}-ccache-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-ccache-
+          compress: true
+          compression_level: 6
+
+      - name: Setup Build Environment
+        run: |
+          sudo sysctl -w net.core.rmem_max=2500000
+          sudo sysctl -w fs.file-max=2097152
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            python3-pip \
+            curl \
+            git \
+            zip \
+            unzip \
+            gcc \
+            g++ \
+            make \
+            ninja-build \
+            file \
+            bc \
+            bison \
+            flex \
+            libssl-dev \
+            libelf-dev \
+            wget \
+            build-essential \
+            python3-dev \
+            python3-setuptools \
+            rsync \
+            ccache \
+            pigz \
+            parallel \
+            repo
+
+      - name: Setup Python and Repo Tool
+        run: |
+          python3 -m pip install --upgrade pip
+          pip3 install -U gitpython xmltodict
+          mkdir -p ~/.bin
+          curl https://storage.googleapis.com/git-repo-downloads/repo > ~/.bin/repo
+          chmod a+x ~/.bin/repo
+          echo "$HOME/.bin" >> $GITHUB_PATH
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "actions@github.com"
+          git config --global protocol.file.allow always
+          git config --global core.compression 9
+          git config --global http.postBuffer 524288000
+
+      - name: Set up directories
+        run: |
+          mkdir -p ./builds
+          cd ./builds
+          export ROOT_DIR="${ROOT_DIR_PREFIX}-$(date +'%Y-%m-%d-%I-%M-%p')-release"
+          echo "ROOT_DIR=${ROOT_DIR}" >> $GITHUB_ENV
+          mkdir -p "$ROOT_DIR"
+
+      - name: Clone repositories
+        working-directory: builds/${{ env.ROOT_DIR }}
+        run: |
+          git clone --single-branch --depth=1 https://github.com/TheWildJames/AnyKernel3.git -b $BRANCH &
+          git clone --single-branch --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android14-6.1 &
+          git clone --single-branch --depth=1 https://github.com/TheWildJames/kernel_patches.git &
+          wait
+
+      - name: Get the kernel
+        working-directory: builds/${{ env.ROOT_DIR }}
+        run: |
+          mkdir oneplus12_v && cd oneplus12_v
+          repo init -u https://github.com/OnePlusOSS/kernel_manifest.git -b oneplus/sm8650 -m oneplus12_v.xml --depth=1
+          repo sync -j$(nproc) --force-sync --no-clone-bundle --no-tags --optimized-fetch --prune
+          rm -rf ./kernel_platform/common/android/abi_gki_protected_exports_*
+
+      - name: Add SUSFS
+        working-directory: builds/${{ env.ROOT_DIR }}/oneplus12_v/kernel_platform
+        run: |
+          curl -LSs "https://raw.githubusercontent.com/5ec1cff/KernelSU/main/kernel/setup.sh" | bash -
+          echo "adding susfs"
+          cp ../../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch ./KernelSU/
+          cp ../../susfs4ksu/kernel_patches/50_add_susfs_in_gki-android14-6.1.patch ./common/
+          cp ../../susfs4ksu/kernel_patches/fs/susfs.c ./common/fs/
+          cp ../../susfs4ksu/kernel_patches/include/linux/susfs.h ./common/include/linux/
+          cp ../../susfs4ksu/kernel_patches/include/linux/susfs_def.h ./common/include/linux/ 
+          cd ./KernelSU/
+          patch -p1 < 10_enable_susfs_for_ksu.patch || true
+          cd ../common
+          patch -p1 < 50_add_susfs_in_gki-android14-6.1.patch || true
+          cp ../../../kernel_patches/69_hide_stuff.patch ./
+          patch -p1 -F 3 < 69_hide_stuff.patch
+          sed -i '/obj-$(CONFIG_KSU_SUSFS_SUS_SU) += sus_su.o/d' ./fs/Makefile
+
+      - name: Configure Kernel
+        working-directory: builds/${{ env.ROOT_DIR }}/oneplus12_v/kernel_platform
+        run: |
+          cat <<EOF >> ./common/arch/arm64/configs/gki_defconfig
+          CONFIG_KSU=y
+          CONFIG_KSU_SUSFS=y
+          CONFIG_KSU_SUSFS_SUS_PATH=y
+          CONFIG_KSU_SUSFS_SUS_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_KSTAT=y
+          CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y
+          CONFIG_KSU_SUSFS_TRY_UMOUNT=y
+          CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+          CONFIG_KSU_SUSFS_ENABLE_LOG=y
+          CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+          CONFIG_KSU_SUSFS_SUS_SU=y
+          EOF
+          sed -i '2s/check_defconfig//' ./common/build.config.gki
+
+      - name: Build Kernel
+        working-directory: builds/${{ env.ROOT_DIR }}/oneplus12_v/kernel_platform
+        run: |
+          mkdir out
+          ./build_with_bazel.py -t pineapple gki --verbose_failures --config=stamp --user_kmi_symbol_lists=//msm-kernel:android/abi_gki_aarch64_qcom --ignore_missing_projects -o "$(pwd)/out"
+
+      - name: Create ZIP Package
+        working-directory: builds/${{ env.ROOT_DIR }}
+        run: |
+          cp oneplus12_v/kernel_platform/out/dist/Image AnyKernel3/Image
+          cp oneplus12_v/kernel_platform/out/dist/Image.lz4 AnyKernel3/Image.lz4
+          cd AnyKernel3
+          ZIP_NAME="Anykernel3-OP-A15-android14-6.1-KernelSU-SUSFS-$(date +'%Y-%m-%d-%H-%M-%S').zip"
+          zip -r9 "../$ZIP_NAME" ./* -x '*.git*' -x 'README.md' -x '*.DS_Store*'
+          echo "ZIP_NAME=$ZIP_NAME" >> $GITHUB_ENV
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2.2.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          files: ./builds/${{ env.ROOT_DIR }}/${{ env.ZIP_NAME }}
+          tag_name: "v$(date +'%Y.%m.%d-%H%M%S')"
+          name: "OP12 A15 android14-6.1 With KernelSU & SUSFS"
+          body: |
+            OnePlus 12 Kernel Release
+            - Based on Android 14 (6.1)
+            - Integrated KernelSU
+            - SUSFS Support
+            - Built with GitHub Actions
+            - Build Date: $(date +'%Y-%m-%d %H:%M:%S')
+            
+            Build Information:
+            - Compiler: $(ccache -V | head -n1)
+            - Build Host: GitHub Actions
+            - Build Type: Release
+          draft: false
+          prerelease: false
+
+      - name: Upload Build Logs
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: build-logs
+          path: |
+            builds/${{ env.ROOT_DIR }}/oneplus12_v/kernel_platform/out/logs
+            builds/${{ env.ROOT_DIR }}/oneplus12_v/kernel_platform/.config
+          compression-level: 9
+          retention-days: 14
