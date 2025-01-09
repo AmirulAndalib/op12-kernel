@@ -86,6 +86,7 @@ jobs:
           git clone https://gitlab.com/simonpunk/susfs4ksu.git --depth 1 --branch gki-android14-6.1
           cp -r susfs4ksu/kernel_patches/* kernel_platform/msm-kernel
           cd kernel_platform/msm-kernel/KernelSU
+          patch -p1 < 10_enable_susfs_for_ksu.patch
           cd ..
           patch -p1 < 50_add_susfs_in_gki-android14-6.1.patch
 
@@ -93,7 +94,7 @@ jobs:
         with:
           path: op12-kernel
           fetch-depth: 0
-      
+
       - name: Include Custom Defconfig
         run: |
           cat op12-kernel/custom_defconfig >> kernel_platform/msm-kernel/arch/arm64/configs/gki_defconfig
@@ -191,6 +192,7 @@ jobs:
           body: |
             OnePlus 12 Kernel Release
             - Based on Android 14 (6.1)
+            - GKI kernel
             - Integrated KernelSU
             - SUSFS Support
             - based on https://github.com/5ec1cff/KernelSU
