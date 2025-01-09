@@ -22,6 +22,11 @@ jobs:
           repo init -u https://github.com/OnePlusOSS/kernel_manifest.git -b oneplus/sm8650 -m oneplus12_v.xml --depth=1
           repo sync
 
+      - name: Fix wifi issues
+        run: |
+          rm kernel_platform/msm-kernel/android/abi_gki_protected_exports_aarch64
+          rm kernel_platform/msm-kernel/android/abi_gki_protected_exports_x86_64
+
       - name: Include KSU
         run: |
           cd kernel_platform/msm-kernel
