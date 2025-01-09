@@ -24,21 +24,23 @@ jobs:
 
       - name: Fix wifi issues
         run: |
-          rm kernel_platform/msm-kernel/android/abi_gki_protected_exports_aarch64
-          rm kernel_platform/msm-kernel/android/abi_gki_protected_exports_x86_64
+          rm kernel_platform/common/android/abi_gki_protected_exports_aarch64
+          rm kernel_platform/common/android/abi_gki_protected_exports_x86_64
 
       - name: Include KSU
         run: |
-          cd kernel_platform/msm-kernel
+          cd kernel_platform
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
 
       - name: Setup susfs4ksu
         run: |
           git clone https://gitlab.com/simonpunk/susfs4ksu.git --depth 1 --branch gki-android14-6.1
-          cp -r susfs4ksu/kernel_patches/* kernel_platform/msm-kernel
-          cd kernel_platform/msm-kernel/KernelSU
+          cp -r susfs4ksu/kernel_patches/KernelSU/* kernel_platform/KernelSU
+          rm -r susfs4ksu/kernel_patches/KernelSU
+          cp -r susfs4ksu/kernel_patches/* kernel_platform/common
+          cd kernel_platform/KernelSU
           patch -p1 < 10_enable_susfs_for_ksu.patch
-          cd ..
+          cd ../common
           patch -p1 < 50_add_susfs_in_gki-android14-6.1.patch
 
       - uses: actions/checkout@v4
@@ -48,14 +50,14 @@ jobs:
       - name: Include custom defconfig
         run: |
           cat op12-kernel/custom_defconfig >> \
-              kernel_platform/msm-kernel/arch/arm64/configs/gki_defconfig
-          sed -i 's/check_defconfig/true/g' kernel_platform/msm-kernel/build.config.gki
+              kernel_platform/common/arch/arm64/configs/gki_defconfig
+          sed -i 's/check_defconfig/true/g' kernel_platform/common/build.config.gki
 
       - name: Build kernel
         run: |
           cd kernel_platform
           mkdir out
-          touch msm-kernel/.scmversion
+          touch common/.scmversion
           python3 build_with_bazel.py -t pineapple gki -o "$(pwd)/out"
 
       # https://github.com/tiann/KernelSU/blob/69f31abd62e4f275bb33c9b478961d09231f154d/.github/workflows/gki-kernel.yml#L220
