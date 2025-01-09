@@ -1,38 +1,91 @@
-name: build-kernel
+name: Build and Release Kernel https://github.com/5ec1cff/KernelSU for OP12 A15 SusFS
+
 on:
+  push:
+    branches:
+      - main
   workflow_dispatch:
+
+env:
+  DEBIAN_FRONTEND: noninteractive
+  ROOT_DIR_PREFIX: "OP12-A15"
+  BRANCH: "android14-6.1"
+  CCACHE_DIR: /home/runner/.ccache
+  CCACHE_COMPRESS: "true"
+  CCACHE_COMPRESSLEVEL: "6"
+  CCACHE_MAXSIZE: "5G"
+  CCACHE_HARDLINK: "true"
+  MAKEFLAGS: "-j$(nproc)"
+  TERM: xterm-256color
+
 jobs:
-  build-ksu:
+  build-release:
     runs-on: ubuntu-latest
+    timeout-minutes: 360
     steps:
       - name: Set Swap Space
         uses: pierotofy/set-swap-space@master
         with:
           swap-size-gb: 10
 
-      - name: Setup build environment
+      - name: Setup Build Environment
         run: |
-          sudo apt-get update
-          sudo apt-get install -y curl git ccache pngcrush schedtool maven lib32ncurses5-dev xsltproc libxml2-utils squashfs-tools lzop flex build-essential bc libssl-dev libswitch-perl libxml-simple-perl zip unzip g++-multilib bison gperf zlib1g-dev automake device-tree-compiler
+          sudo apt-get update -y
+          sudo apt-get install -y --no-install-recommends \
+            python3-pip \
+            curl \
+            git \
+            zip \
+            unzip \
+            gcc \
+            g++ \
+            make \
+            ninja-build \
+            file \
+            bc \
+            bison \
+            flex \
+            libssl-dev \
+            libelf-dev \
+            wget \
+            build-essential \
+            python3-dev \
+            python3-setuptools \
+            rsync \
+            ccache \
+            pigz \
+            parallel
           sudo curl --create-dirs -L -o /usr/local/bin/repo -O -L https://storage.googleapis.com/git-repo-downloads/repo
           sudo chmod a+rx /usr/local/bin/repo
 
-      - name: Clone repo and sync
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          max-size: 5G
+          key: ${{ runner.os }}-ccache-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-ccache-
+
+      - name: Clone Repo and Sync
         run: |
           repo init -u https://github.com/OnePlusOSS/kernel_manifest.git -b oneplus/sm8650 -m oneplus12_v.xml --depth=1
-          repo sync
+          repo sync -j$(nproc)
+
+      - name: Remove ABI Protected Exports Files
+        run: |
+          rm -f kernel_platform/common/android/abi_gki_protected_exports_aarch64
+          rm -f kernel_platform/common/android/abi_gki_protected_exports_x86_64
 
       - name: Include KSU
         run: |
           cd kernel_platform/msm-kernel
-          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -
+          curl -LSs "https://raw.githubusercontent.com/5ec1cff/KernelSU/main/kernel/setup.sh" | bash -
 
       - name: Setup susfs4ksu
         run: |
           git clone https://gitlab.com/simonpunk/susfs4ksu.git --depth 1 --branch gki-android14-6.1
           cp -r susfs4ksu/kernel_patches/* kernel_platform/msm-kernel
           cd kernel_platform/msm-kernel/KernelSU
-          patch -p1 < 10_enable_susfs_for_ksu.patch
           cd ..
           patch -p1 < 50_add_susfs_in_gki-android14-6.1.patch
 
@@ -40,37 +93,111 @@ jobs:
         with:
           path: op12-kernel
           fetch-depth: 0
-      - name: Include custom defconfig
+      
+      - name: Include Custom Defconfig
         run: |
-          cat op12-kernel/custom_defconfig >> \
-              kernel_platform/msm-kernel/arch/arm64/configs/gki_defconfig
+          cat op12-kernel/custom_defconfig >> kernel_platform/msm-kernel/arch/arm64/configs/gki_defconfig
           sed -i 's/check_defconfig/true/g' kernel_platform/msm-kernel/build.config.gki
 
-      - name: Build kernel
+      - name: Build Kernel
         run: |
           cd kernel_platform
           mkdir out
           touch .scmversion
           python3 build_with_bazel.py -t pineapple gki -o "$(pwd)/out"
-
-      # https://github.com/tiann/KernelSU/blob/69f31abd62e4f275bb33c9b478961d09231f154d/.github/workflows/gki-kernel.yml#L220
-      - name: Prepare artifacts
+          
+      - name: Generate Tag Name and Build Date
+        id: generate_tag
         run: |
-          mkdir output
-          cp kernel_platform/out/dist/Image output
-          cp kernel_platform/out/dist/Image.lz4 output
+          TAG_NAME="v$(date +'%Y.%m.%d-%H%M%S')"
+          BUILD_DATE="$(date +'%Y-%m-%d %H:%M:%S')"
+          echo "TAG_NAME=${TAG_NAME}" >> $GITHUB_ENV
+          echo "BUILD_DATE=${BUILD_DATE}" >> $GITHUB_ENV
+          echo "tag_name=${TAG_NAME}" >> $GITHUB_OUTPUT
+          echo "build_date=${BUILD_DATE}" >> $GITHUB_OUTPUT
+
+      - name: Prepare Artifacts
+        run: |
+          mkdir -p output
+          # Verify and copy kernel images
+          if [ -f kernel_platform/out/dist/Image ]; then
+            cp kernel_platform/out/dist/Image output/
+          else
+            echo "Error: Image file not found"
+            exit 1
+          fi
+          
+          if [ -f kernel_platform/out/dist/Image.lz4 ]; then
+            cp kernel_platform/out/dist/Image.lz4 output/
+          else
+            echo "Error: Image.lz4 file not found"
+            exit 1
+          fi
+          
+          # Clone and prepare AnyKernel3
           git clone https://github.com/Kernel-SU/AnyKernel3 --depth 1
           rm -rf AnyKernel3/.git
-          cp kernel_platform/out/dist/Image AnyKernel3
+          
+          # Change to AnyKernel3 directory and prepare zip
+          cd AnyKernel3
+          if [ -f ../kernel_platform/out/dist/Image ]; then
+            cp ../kernel_platform/out/dist/Image ./
+          else
+            echo "Error: Image file not found for AnyKernel3"
+            exit 1
+          fi
+          
+          # Create zip from within AnyKernel3 directory
+          ZIP_NAME="AnyKernel3_ksu_susfs_${TAG_NAME}_op12.zip"
+          zip -r "../output/${ZIP_NAME}" *
+          cd ..
+          
+          # Verify all files exist
+          ls -la output/
 
-      - name: Upload Image and Image.gz
+      - name: Upload Image and Image
         uses: actions/upload-artifact@v4
         with:
           name: Image-op12
           path: output/*
+          if-no-files-found: error
 
       - name: Upload AnyKernel3
         uses: actions/upload-artifact@v4
         with:
           name: AnyKernel3-op12
           path: AnyKernel3/*
+          if-no-files-found: error
+
+      - name: Verify Release Files
+        run: |
+          for file in output/*; do
+            echo "Verifying file: $file"
+            if [ ! -f "$file" ]; then
+              echo "Error: File $file not found"
+              exit 1
+            fi
+            ls -l "$file"
+          done
+
+      - name: Create GitHub Release
+        id: create_release
+        uses: ncipollo/release-action@v1
+        with:
+          artifacts: "output/*"
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag: ${{ env.TAG_NAME }}
+          name: "OP12 A15 android14-6.1 With KernelSU & SUSFS"
+          body: |
+            OnePlus 12 Kernel Release
+            - Based on Android 14 (6.1)
+            - Integrated KernelSU
+            - SUSFS Support
+            - based on https://github.com/5ec1cff/KernelSU
+ 
+            - Built with GitHub Actions
+            - Build Date: ${{ env.BUILD_DATE }}
+          draft: false
+          prerelease: false
+          allowUpdates: true
+          replacesArtifacts: true
