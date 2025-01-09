@@ -50,6 +50,7 @@ jobs:
         run: |
           cd kernel_platform
           mkdir out
+          touch msm-kernel/.scmversion
           python3 build_with_bazel.py -t pineapple gki -o "$(pwd)/out"
 
       # https://github.com/tiann/KernelSU/blob/69f31abd62e4f275bb33c9b478961d09231f154d/.github/workflows/gki-kernel.yml#L220
