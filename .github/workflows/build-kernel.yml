@@ -10,10 +10,25 @@ jobs:
         with:
           swap-size-gb: 10
 
+      - name: Free Disk Space (Ubuntu)
+        uses: jlumbroso/free-disk-space@main
+        with:
+          tool-cache: true
+          android: true
+          dotnet: true
+          haskell: true
+          large-packages: true
+          docker-images: true
+          swap-storage: true
+
+      - uses: actions/setup-python@v5 
+        with:
+          python-version: 'pypy3.10' 
+
       - name: Setup build environment
         run: |
           sudo apt-get update
-          sudo apt-get install -y curl git ccache pngcrush schedtool maven xsltproc libxml2-utils squashfs-tools lzop flex build-essential bc libssl-dev libswitch-perl libxml-simple-perl zip unzip g++-multilib bison gperf zlib1g-dev automake device-tree-compiler
+          sudo apt-get install -y curl git
           sudo curl --create-dirs -L -o /usr/local/bin/repo -O -L https://storage.googleapis.com/git-repo-downloads/repo
           sudo chmod a+rx /usr/local/bin/repo
 
@@ -58,7 +73,7 @@ jobs:
           cd kernel_platform
           mkdir out
           touch common/.scmversion
-          python3 build_with_bazel.py -t pineapple gki --lto=thin --config=fast --nouse_action_cache --repository_cache="" -o "$(pwd)/out"
+          python build_with_bazel.py -t pineapple gki --lto=thin --config=fast --disk_cache=/home/runner/.cache/bazel -o "$(pwd)/out"
 
       # https://github.com/tiann/KernelSU/blob/69f31abd62e4f275bb33c9b478961d09231f154d/.github/workflows/gki-kernel.yml#L220
       - name: Prepare artifacts
